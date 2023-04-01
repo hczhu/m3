@@ -217,7 +217,7 @@ type databaseNamespaceTickMetrics struct {
 	index                  databaseNamespaceIndexTickMetrics
 	evictedBuckets         tally.Counter
     // How many nanoseconds for running a metric tracking tick.
-	metricTrackingTickDuratingNano tally.Gauge
+	tickDuratingNano tally.Gauge
 }
 
 type databaseNamespaceIndexTickMetrics struct {
@@ -301,7 +301,7 @@ func newDatabaseNamespaceMetrics(
 				numBlocksEvicted: indexTickScope.Counter("num-blocks-evicted"),
 			},
 			evictedBuckets: tickScope.Counter("evicted-buckets"),
-			metricTrackingTickDuratingNano: tickScope.Gauge("metric-tracking-duration-nano"),
+			tickDuratingNano: tickScope.Gauge("metric-tracking-duration-nano"),
 		},
 		status: databaseNamespaceStatusMetrics{
 			activeSeries: statusScope.Gauge("active-series"),
@@ -644,7 +644,7 @@ func (n *dbNamespace) Tick(c context.Cancellable, startTime xtime.UnixNano) erro
 		tickOptions = TickOptions{TopMetricsToTrack: 0}
 	)
 	n.tickSeqNo++
-	var tickStartTimeNano xtime.UnixNano = 0
+	tickStartTimeNano := xtime.Now()
 	if n.shouldTrackTopMetrics && (n.tickSeqNo%int64(n.tickOptions.TopMetricsTrackingTicks) == 0) {
 		tickOptions = n.tickOptions
 		r.trackTopMetrics()
@@ -652,7 +652,6 @@ func (n *dbNamespace) Tick(c context.Cancellable, startTime xtime.UnixNano) erro
 			zap.Int("TopMetricsTrackingTicks", n.tickOptions.TopMetricsTrackingTicks),
 			zap.Int64("tickSeqNo", n.tickSeqNo),
 		)
-		tickStartTimeNano = xtime.Now()
 	}
 	for _, shard := range shards {
 		shard := shard
@@ -673,14 +672,6 @@ func (n *dbNamespace) Tick(c context.Cancellable, startTime xtime.UnixNano) erro
 	}
 
 	wg.Wait()
-	if tickStartTimeNano > 0 {
-		tickDurationNano := xtime.Since(tickStartTimeNano).Nanoseconds()
-		n.log.Info("tick finished with top metric tracking.",
-			zap.Int64("tickSeqNo", n.tickSeqNo),
-			zap.Int64("tickDurationNano", tickDurationNano),
-		)
-		n.metrics.tick.metricTrackingTickDuratingNano.Update(float64(tickDurationNano))
-	}
 
 	// Tick namespaceIndex if it exists.
 	var (
@@ -727,12 +718,14 @@ func (n *dbNamespace) Tick(c context.Cancellable, startTime xtime.UnixNano) erro
 	n.metrics.tick.index.numBlocksEvicted.Inc(indexTickResults.NumBlocksEvicted)
 	n.metrics.tick.index.numBlocksSealed.Inc(indexTickResults.NumBlocksSealed)
 	n.metrics.tick.errors.Inc(int64(r.errors))
-	for metric, cardinality := range r.metricToCardinality {
-		if cardinality >= tickOptions.MinCardinalityToTrack {
+	for _, metric := range r.metricToCardinality {
+		if metric.cardinality >= tickOptions.MinCardinalityToTrack {
 			// If the gauge does not exist, it will be created on the fly.
-			n.metrics.tick.metricCardinality.Gauge(metric).Update(float64(cardinality))
+			n.metrics.tick.metricCardinality.Gauge(string(metric.name)).Update(float64(metric.cardinality))
 		}
 	}
+	tickDurationNano := xtime.Since(tickStartTimeNano).Nanoseconds()
+	n.metrics.tick.tickDuratingNano.Update(float64(tickDurationNano))
 
 	return nil
 }

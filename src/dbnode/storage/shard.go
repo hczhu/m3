@@ -794,11 +794,12 @@ func (s *dbShard) tickAndExpire(
 				if shouldTrackTopMetrics {
 					// TODO: find a cheaper way to get the metric name. 'Get()' iterates on all labels.
 					if metricNameBytes, ok := entry.Series.Metadata().Get([]byte(metricLabelName)); ok {
-						metricName := string(metricNameBytes)
-						if currentCardinality, ok := r.metricToCardinality[metricName]; ok {
-							r.metricToCardinality[metricName] = currentCardinality + 1
+						nameHash, metric := newMetricCardinality(metricNameBytes, 1)
+						// We don't handle hash collisions here, since we are not looking for precise top metrics/candinality.
+						if currentMetric, ok := r.metricToCardinality[nameHash]; ok {
+							currentMetric.cardinality++
 						} else if len(r.metricToCardinality) < maxMapLenForTracking {
-							r.metricToCardinality[metricName] = 1
+							r.metricToCardinality[nameHash] = metric
 						}
 					}
 				}

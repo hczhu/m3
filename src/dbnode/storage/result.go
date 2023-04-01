@@ -20,8 +20,27 @@
 
 package storage
 
-import "sort"
+import (
+	"hash/fnv"
+	"sort"
+)
 
+func getHash(b []byte) uint64 {
+	hash := fnv.New64a()
+	hash.Write(b)
+	return hash.Sum64()
+}
+
+type metricCardinality struct {
+	name []byte
+	cardinality int
+}
+func newMetricCardinality(name []byte, cardinality int) (uint64, *metricCardinality) {
+	return getHash(name), &metricCardinality{
+		name: name,
+		cardinality: cardinality,
+	}
+}
 type tickResult struct {
 	activeSeries           int
 	expiredSeries          int
@@ -34,11 +53,12 @@ type tickResult struct {
 	mergedOutOfOrderBlocks int
 	errors                 int
 	evictedBuckets         int
-	metricToCardinality    map[string]int
+	// The key is the hash value of the metric name.
+	metricToCardinality    map[uint64]*metricCardinality
 }
 
 func (r *tickResult) trackTopMetrics() {
-	r.metricToCardinality = make(map[string]int)
+	r.metricToCardinality = make(map[uint64]*metricCardinality)
 }
 
 func (r *tickResult) truncateTopMetrics(topN int) {
@@ -50,10 +70,10 @@ func (r *tickResult) truncateTopMetrics(topN int) {
 	}
 	// TODO: use a heap to optimize this.
 	cardinalities := make([]int, 0, len(r.metricToCardinality))
-	for _, cardinality := range r.metricToCardinality {
-		cardinalities = append(cardinalities, cardinality)
+	for _, metric := range r.metricToCardinality {
+		cardinalities = append(cardinalities, metric.cardinality)
 	}
-	sort.Reverse(sort.IntSlice(cardinalities))
+	sort.Sort(sort.Reverse(sort.IntSlice(cardinalities)))
 	cutoffValue := cardinalities[topN-1]
 	cutoffValueQuota := 1
 	for i := topN - 2; i >= 0; i-- {
@@ -63,14 +83,14 @@ func (r *tickResult) truncateTopMetrics(topN int) {
 			break
 		}
 	}
-	for metric, cardinality := range r.metricToCardinality {
-		if cardinality < cutoffValue {
-			delete(r.metricToCardinality, metric)
-		} else if cardinality == cutoffValue {
+	for hash, metric := range r.metricToCardinality {
+		if metric.cardinality < cutoffValue {
+			delete(r.metricToCardinality, hash)
+		} else if metric.cardinality == cutoffValue {
 			if cutoffValueQuota > 0 {
 				cutoffValueQuota--
 			} else {
-				delete(r.metricToCardinality, metric)
+				delete(r.metricToCardinality, hash)
 			}
 		}
 	}
@@ -98,11 +118,11 @@ func (r *tickResult) merge(other tickResult, topN int) {
 		return
 	}
 
-	for metric, cardinality := range other.metricToCardinality {
-		if currentValue, ok := r.metricToCardinality[metric]; ok {
-			r.metricToCardinality[metric] = currentValue + cardinality
+	for hash, otherMetric := range other.metricToCardinality {
+		if currentMetric, ok := r.metricToCardinality[hash]; ok {
+			currentMetric.cardinality += otherMetric.cardinality
 		} else {
-			r.metricToCardinality[metric] = cardinality
+			r.metricToCardinality[hash] = otherMetric
 		}
 	}
 
