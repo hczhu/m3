@@ -504,7 +504,7 @@ type TickConfiguration struct {
 	// Cap the size of the map of metric names to cardinality to maxMapLen to avoid unbounded memory usage.
 	MaxMapLenForTracking    int `yaml:"maxMapLenForTracking" validate:"min=10"`
 	// How often to report the top metrics? Once in every N ticks.
-	TopMetricsTrackingTicks int `yaml:"topMetricsTrackingTicks" validate:"min=5"`
+	TopMetricsTrackingTicks int `yaml:"topMetricsTrackingTicks" validate:"min=1"`
 }
 
 // BlockRetrievePolicy is the block retrieve policy.
